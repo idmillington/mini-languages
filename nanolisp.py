@@ -73,7 +73,8 @@ def main():
     print l._eval(
         ['setq', 'factorial', 
             ['lambda', ['x'], 
-                ['cond', [['equal?', 'x', 0], 1],
+                ['cond', [
+                    ['equal?', 'x', 0], 1],
                     [True, ['*', 'x', ['factorial', ['-', 'x', 1]]]]
                 ]
             ]
