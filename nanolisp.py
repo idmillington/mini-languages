@@ -1,13 +1,62 @@
+#!/usr/bin/env python
+
 import inspect
 import operator
 
+class Scope(dict):
+    """
+    A dictionary that falls back to a parent. This can be used to
+    manage scopes.
+    """
+    def __init__(self, parent):
+        self._parent = parent
+
+    def __getitem__(self, item):
+        if super(Scope, self).__contains__(item):
+            return super(Scope, self).__getitem__(item)
+        elif self._parent:
+            return self._parent[item]
+        else:
+            raise KeyError(repr(item))
+
+    def get(self, item, default=None):
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
+    def __delitem__(self, item):
+        if super(Scope, self).__contains__(item):
+            return super(Scope, self).__delitem__(item)
+        elif self._parent:
+            del self._parent[item]
+        else:
+            raise KeyError(repr(item))
+
+    def __contains__(self, item):
+        if super(Scope, self).__contains__(item):
+            return True
+        elif self._parent:
+            return item in self._parent
+        else:
+            return False
+
 class LispInterpreter(object):
+    """
+    A very basic interpreter for a tiny subdialect of a LISP-like
+    language. Note that the language doesn't try to parse, we use
+    Python lists as the sexpressions in the language.
+    """
     def __init__(self):
         self._globals = {
+            # Boolean aliases.
+            '#t': True,
+            '#nil': False,
+
             # Functions we have defined in this class.
             'setq': self._setq,
             'cond': self._cond,
-            
+
             # Functions we can define inline.
             'car': lambda expr, ctx: expr[0][0],
             'cdr': lambda expr, ctx: expr[0][1:],
@@ -18,51 +67,63 @@ class LispInterpreter(object):
             '/': lambda expr, ctx: reduce(operator.div, expr),
             'equal?': lambda expr, ctx: expr[0] == expr[1]
         }
-        
-    def _is_primitive(self, name):
-        return inspect.isroutine(self._globals.get(name))
-        
-    def _is_lazy(self, name): 
-        return name in ['cond', 'quote', 'setq'] \
-            if self._is_primitive(name) else \
-            self._globals.get(name, [None]) == 'macro'
-    
-    def _is_atom(self, name):
-        return type(name) != list and type(name) != dict
+        self._lazy = ['cond', 'quote', 'setq']
 
     # Standard lisp apply/eval
-    
+
     def _apply(self, fn, args, context):
-        if self._is_primitive(fn): 
-            return self._globals[fn](args, context)
-        else:
-            context = dict(zip(self._globals[fn][1], args))
-            return self._eval(self._globals[fn][2], context)
+        """
+        Runs a function with a given set of arguments and a scope
+        context.
+        """
+        # We can use actual functions or lambdas
+        if inspect.isroutine(fn):
+            return fn(args, context)
 
-    def _eval(self, expression, context):
-        if self._is_atom(expression):
-            if expression in context:
-                return context[expression]
-            else:
-                return expression
-        else:
-            fn = expression[0]
-            args = expression[1]
+        # If the target is a function or method, run it right away
+        elif inspect.isroutine(context.get(fn)):
+            return context[fn](args, context)
 
-            # Evaluate the arguments to the function
-            if not self._is_lazy(fn):
+        # Otherwise the target is a lambda expression, so we need to
+        # eval it in a new scope (note that the scoping system in this
+        # section means that our LISP is dynamically rather than
+        # statically scoped).
+        else:
+            definition = context[fn]
+            assert definition[0] == 'lambda'
+            # Create a new sub-scope with our arguments in it, and
+            # eval the lambda body.
+            context = Scope(context)
+            context.update(dict(zip(definition[1], args)))
+            return self._eval(definition[2], context)
+
+    def _eval(self, sexpression, context):
+        """
+        Interprets an s-expression, returning its value.
+        """
+        if type(sexpression) != list:
+            # If we can find it in the context, it is probably a
+            # string, otherwise use the value unaltered.
+            return context.get(sexpression, sexpression)
+        else:
+            fn = sexpression[0]
+            args = sexpression[1:]
+
+            # As long as we're not lazy, evaluate the arguments to the
+            # function.
+            if fn not in self._lazy:
                 args = map(lambda n: self._eval(n, context), args)
 
             return self._apply(fn, args, context)
 
     # Functions that are callable from the language.
-        
-    def _setq(self, expression, context):
-        self._globals[expression[0]] = expression[1]
-        return expression[1]
-                    
-    def _cond(self, expression, context):
-        for condition, effect in expression:
+
+    def _setq(self, sexpression, context):
+        context[sexpression[0]] = sexpression[1]
+        return sexpression[1]
+
+    def _cond(self, sexpression, context):
+        for condition, effect in sexpression:
             if self._eval(condition, context):
                 return self._eval(effect, context)
         else:
@@ -70,15 +131,21 @@ class LispInterpreter(object):
 
 def main():
     l = LispInterpreter()
-    print l._eval(
-        ['setq', 'factorial', 
-            ['lambda', ['x'], 
+
+    context = Scope(l._globals)
+    l._eval(
+        ['setq', 'factorial',
+            ['lambda', ['x'],
                 ['cond', [['equal?', 'x', 0], 1],
                     [True, ['*', 'x', ['factorial', ['-', 'x', 1]]]]
                 ]
             ]
-        ], l._globals)
-    
+        ], context)
+    print l._eval(
+        ['factorial', 5],
+        context
+        )
+
 if __name__ == '__main__':
     main()
 
