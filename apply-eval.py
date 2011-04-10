@@ -69,37 +69,38 @@ class ApplyEvalInterpreter(object):
             '/': lambda expr, ctx: reduce(operator.div, expr),
             'equal?': lambda expr, ctx: expr[0] == expr[1]
         }
-        
-        # These functions don't evaluate their operands immediately. Note that
-        # this is an all or nothing thing, and the individual functions must
-        # evaluate anything that wasn't already evaluated.
-        self._lazy = ['lambda', 'cond', 'quote', 'setq']
-        
+
+        # These functions don't evaluate their operands
+        # immediately. Note that this is an all or nothing thing, and
+        # the individual functions must evaluate anything that wasn't
+        # already evaluated.
+        self._lazy = ['lambda', 'cond', 'quote', 'setq!']
+
     def make_global_environment(self):
         """
-        Create the global environment, with references to the builtin set
-        and itself.
+        Create the global environment, with references to the builtin
+        set and itself.
         """
         globals_ = Environment(self._builtins)
         globals_['__builtins__'] = self._builtins
         globals_['__globals__'] = globals_
         return globals_
-        
+
     def eval(self, sexpression, env=None):
         """
-        Top level interpreter, returns the value associated with the given 
-        expression, in the given environment (or a new default global, if
-        none is given).
+        Top level interpreter, returns the value associated with the
+        given expression, in the given environment (or a new default
+        global, if none is given).
         """
-        if env is None:
-            env = self.make_global_environment
+        if env is None: env = self.make_global_environment()
         return self._eval(sexpression, env)
 
     # Standard lisp-like apply/eval
 
     def _apply(self, fn, args, env):
         """
-        Runs a function with a given set of arguments and an environment.
+        Runs a function with a given set of arguments and an
+        environment.
         """
         # We can use actual functions or lambdas
         if inspect.isroutine(fn):
@@ -110,7 +111,8 @@ class ApplyEvalInterpreter(object):
             return env[fn](args, env)
 
         # Otherwise the target is a lambda expression, so we need to
-        # eval it in a new Environment. This implements lexical scoping.
+        # eval it in a new Environment. This implements lexical
+        # scoping.
         else:
             definition = env[fn]
             assert definition[0] == 'lambda'
@@ -125,7 +127,7 @@ class ApplyEvalInterpreter(object):
         Interprets an s-expression, returning its value.
         """
         if type(sexpression) != list:
-            # If we can find it in the environment, use that 
+            # If we can find it in the environment, use that
             # otherwise it is probably a primitive type.
             return env.get(sexpression, sexpression)
         else:
@@ -140,7 +142,7 @@ class ApplyEvalInterpreter(object):
             return self._apply(fn, args, env)
 
     # Functions that are callable from the language.
-    
+
     def _lambda(self, sexpression, env):
         """
         Stores a lambda with its environment, ready for later application.
@@ -152,7 +154,7 @@ class ApplyEvalInterpreter(object):
         return sexpression[1]
 
     def _setq(self, sexpression, env):
-        # Because setq is lazy, neither argument is evaled, so we need to 
+        # Because setq is lazy, neither argument is evaled, so we need to
         # manually eval the latter one.
         env[sexpression[0]] = self.eval(sexpression[1], env)
         return sexpression[1]
@@ -168,7 +170,7 @@ def main():
     l = ApplyEvalInterpreter()
     env = l.make_global_environment()
     l.eval(
-        ['setq', 'factorial',
+        ['setq!', 'factorial',
             ['lambda', ['x'],
                 ['cond',
                     [['equal?', 'x', 0], 1],
