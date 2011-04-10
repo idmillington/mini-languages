@@ -3,17 +3,17 @@
 import inspect
 import operator
 
-class Scope(dict):
+class Environment(dict):
     """
     A dictionary that falls back to a parent. This can be used to
-    manage scopes.
+    manage binding environments.
     """
     def __init__(self, parent):
         self._parent = parent
 
     def __getitem__(self, item):
-        if super(Scope, self).__contains__(item):
-            return super(Scope, self).__getitem__(item)
+        if super(Environment, self).__contains__(item):
+            return super(Environment, self).__getitem__(item)
         elif self._parent:
             return self._parent[item]
         else:
@@ -26,35 +26,36 @@ class Scope(dict):
             return default
 
     def __delitem__(self, item):
-        if super(Scope, self).__contains__(item):
-            return super(Scope, self).__delitem__(item)
+        if super(Environment, self).__contains__(item):
+            return super(Environment, self).__delitem__(item)
         elif self._parent:
             del self._parent[item]
         else:
             raise KeyError(repr(item))
 
     def __contains__(self, item):
-        if super(Scope, self).__contains__(item):
+        if super(Environment, self).__contains__(item):
             return True
         elif self._parent:
             return item in self._parent
         else:
             return False
 
-class LispInterpreter(object):
+class ApplyEvalInterpreter(object):
     """
     A very basic interpreter for a tiny subdialect of a LISP-like
     language. Note that the language doesn't try to parse, we use
     Python lists as the sexpressions in the language.
     """
     def __init__(self):
-        self._globals = {
+        self._builtins = {
             # Boolean aliases.
             '#t': True,
             '#nil': False,
 
             # Functions we have defined in this class.
-            'setq': self._setq,
+            'set': self._set,
+            'setq': self._set,
             'cond': self._cond,
 
             # Functions we can define inline.
@@ -67,44 +68,67 @@ class LispInterpreter(object):
             '/': lambda expr, ctx: reduce(operator.div, expr),
             'equal?': lambda expr, ctx: expr[0] == expr[1]
         }
+        
+        # These functions don't evaluate their operands immediately. Note that
+        # this is an all or nothing thing, and the individual functions must
+        # evaluate anything that wasn't already evaluated.
         self._lazy = ['cond', 'quote', 'setq']
-
-    # Standard lisp apply/eval
-
-    def _apply(self, fn, args, context):
+        
+    def make_global_environment(self):
         """
-        Runs a function with a given set of arguments and a scope
-        context.
+        Create the global environment, with references to the builtin set
+        and itself.
+        """
+        globals_ = Environment(self._builtins)
+        globals_['__builtins__'] = self._builtins
+        globals_['__globals__'] = globals_
+        return globals_
+        
+    def eval(self, sexpression, env=None):
+        """
+        Top level interpreter, returns the value associated with the given 
+        expression, in the given environment (or a new default global, if
+        none is given).
+        """
+        if env is None:
+            env = self.make_global_environment
+        return self._eval(sexpression, env)
+
+    # Standard lisp-like apply/eval
+
+    def _apply(self, fn, args, env):
+        """
+        Runs a function with a given set of arguments and an environment.
         """
         # We can use actual functions or lambdas
         if inspect.isroutine(fn):
-            return fn(args, context)
+            return fn(args, env)
 
         # If the target is a function or method, run it right away
-        elif inspect.isroutine(context.get(fn)):
-            return context[fn](args, context)
+        elif inspect.isroutine(env.get(fn)):
+            return env[fn](args, env)
 
         # Otherwise the target is a lambda expression, so we need to
-        # eval it in a new scope (note that the scoping system in this
-        # section means that our LISP is dynamically rather than
-        # statically scoped).
+        # eval it in a new Environment (note that the scoping system in this
+        # section means that our language is dynamically rather than
+        # statically Environmentd).
         else:
-            definition = context[fn]
+            definition = env[fn]
             assert definition[0] == 'lambda'
-            # Create a new sub-scope with our arguments in it, and
+            # Create a new sub-environment with our arguments in it, and
             # eval the lambda body.
-            context = Scope(context)
-            context.update(dict(zip(definition[1], args)))
-            return self._eval(definition[2], context)
+            env = Environment(env)
+            env.update(dict(zip(definition[1], args)))
+            return self._eval(definition[2], env)
 
-    def _eval(self, sexpression, context):
+    def _eval(self, sexpression, env):
         """
         Interprets an s-expression, returning its value.
         """
         if type(sexpression) != list:
-            # If we can find it in the context, it is probably a
-            # string, otherwise use the value unaltered.
-            return context.get(sexpression, sexpression)
+            # If we can find it in the environment, it is probably a
+            # primitive type, otherwise use the value unaltered.
+            return env.get(sexpression, sexpression)
         else:
             fn = sexpression[0]
             args = sexpression[1:]
@@ -112,28 +136,32 @@ class LispInterpreter(object):
             # As long as we're not lazy, evaluate the arguments to the
             # function.
             if fn not in self._lazy:
-                args = map(lambda n: self._eval(n, context), args)
+                args = map(lambda n: self._eval(n, env), args)
 
-            return self._apply(fn, args, context)
+            return self._apply(fn, args, env)
 
     # Functions that are callable from the language.
 
-    def _setq(self, sexpression, context):
-        context[sexpression[0]] = sexpression[1]
+    def _set(self, sexpression, env):
+        """
+        This same function is used for set/2 and setq/2, the latter is marked
+        as 'lazy', however, so it doesn't evaluate its arguments before
+        setting them (setq is short for 'set quoted').
+        """
+        env[sexpression[0]] = sexpression[1]
         return sexpression[1]
 
-    def _cond(self, sexpression, context):
+    def _cond(self, sexpression, env):
         for condition, effect in sexpression:
-            if self._eval(condition, context):
-                return self._eval(effect, context)
+            if self._eval(condition, env):
+                return self._eval(effect, env)
         else:
             return False
 
 def main():
-    l = LispInterpreter()
-
-    context = Scope(l._globals)
-    l._eval(
+    l = ApplyEvalInterpreter()
+    env = l.make_global_environment()
+    l.eval(
         ['setq', 'factorial',
             ['lambda', ['x'],
                 ['cond',
@@ -141,10 +169,10 @@ def main():
                     [True, ['*', 'x', ['factorial', ['-', 'x', 1]]]]
                 ]
             ]
-        ], context)
-    print l._eval(
+        ], env)
+    print l.eval(
         ['factorial', 5],
-        context
+        env
         )
 
 if __name__ == '__main__':
