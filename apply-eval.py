@@ -55,8 +55,9 @@ class ApplyEvalInterpreter(object):
 
             # Functions we have defined in this class.
             'set': self._set,
-            'setq': self._set,
+            'setq': self._setq,
             'cond': self._cond,
+            'lambda': self._lambda,
 
             # Functions we can define inline.
             'car': lambda expr, ctx: expr[0][0],
@@ -72,7 +73,7 @@ class ApplyEvalInterpreter(object):
         # These functions don't evaluate their operands immediately. Note that
         # this is an all or nothing thing, and the individual functions must
         # evaluate anything that wasn't already evaluated.
-        self._lazy = ['cond', 'quote', 'setq']
+        self._lazy = ['lambda', 'cond', 'quote', 'setq']
         
     def make_global_environment(self):
         """
@@ -109,17 +110,15 @@ class ApplyEvalInterpreter(object):
             return env[fn](args, env)
 
         # Otherwise the target is a lambda expression, so we need to
-        # eval it in a new Environment (note that the scoping system in this
-        # section means that our language is dynamically rather than
-        # statically Environmentd).
+        # eval it in a new Environment. This implements lexical scoping.
         else:
             definition = env[fn]
             assert definition[0] == 'lambda'
-            # Create a new sub-environment with our arguments in it, and
-            # eval the lambda body.
-            env = Environment(env)
-            env.update(dict(zip(definition[1], args)))
-            return self._eval(definition[2], env)
+            # Create a new environment from the stored one.
+            env = Environment(definition[1])
+            # Map the bindings of the variables
+            env.update(dict(zip(definition[2], args)))
+            return self._eval(definition[3], env)
 
     def _eval(self, sexpression, env):
         """
@@ -141,14 +140,21 @@ class ApplyEvalInterpreter(object):
             return self._apply(fn, args, env)
 
     # Functions that are callable from the language.
+    
+    def _lambda(self, sexpression, env):
+        """
+        Stores a lambda with its environment, ready for later application.
+        """
+        return ('lambda', env, sexpression[0], sexpression[1])
 
     def _set(self, sexpression, env):
-        """
-        This same function is used for set/2 and setq/2, the latter is marked
-        as 'lazy', however, so it doesn't evaluate its arguments before
-        setting them (setq is short for 'set quoted').
-        """
         env[sexpression[0]] = sexpression[1]
+        return sexpression[1]
+
+    def _setq(self, sexpression, env):
+        # Because setq is lazy, neither argument is evaled, so we need to 
+        # manually eval the latter one.
+        env[sexpression[0]] = self.eval(sexpression[1], env)
         return sexpression[1]
 
     def _cond(self, sexpression, env):
