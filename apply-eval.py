@@ -54,8 +54,8 @@ class ApplyEvalInterpreter(object):
             '#nil': False,
 
             # Functions we have defined in this class.
-            'set': self._set,
-            'setq': self._setq,
+            'set!': self._set,
+            'setq!': self._setq,
             'cond': self._cond,
             'lambda': self._lambda,
 
@@ -125,8 +125,8 @@ class ApplyEvalInterpreter(object):
         Interprets an s-expression, returning its value.
         """
         if type(sexpression) != list:
-            # If we can find it in the environment, it is probably a
-            # primitive type, otherwise use the value unaltered.
+            # If we can find it in the environment, use that 
+            # otherwise it is probably a primitive type.
             return env.get(sexpression, sexpression)
         else:
             fn = sexpression[0]
